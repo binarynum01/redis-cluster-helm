@@ -12,7 +12,7 @@ Bitnami `redis-cluster` 차트가 유료화됨에 따라 공식 Redis 이미지�
 ## 특징
 
 - **공식 이미지** — Docker Hub `redis` 공식 이미지 사용 (Bitnami 구독 불필요)
-- **hostname 기반 클러스터** — Pod 재시작 시 IP 변경에도 클러스터 유지
+- **IP 기반 클러스터** — Kubernetes Downward API로 Pod IP 주입, CNI(AWS VPC CNI, Calico, Cilium 등)에 무관하게 동작
 - **멱등 초기화** — Helm post-install/post-upgrade Job으로 클러스터 자동 구성, 이미 구성된 경우 스킵
 - **비밀번호 보존** — `helm upgrade` 시 기존 Secret lookup으로 비밀번호 재생성 방지
 - **Prometheus 지원** — redis_exporter 사이드카 및 ServiceMonitor 옵션 제공
@@ -177,7 +177,7 @@ topologySpreadConstraints: []
 | 이미지 | bitnami/redis-cluster (유료) | redis (공식, 무료) |
 | 외부 의존성 | bitnami/common 라이브러리 | 없음 |
 | 클러스터 초기화 | pod-0 내부 스크립트 | 별도 Kubernetes Job |
-| 클러스터 앤드포인트 | IP 기반 | hostname 기반 |
+| 클러스터 앤드포인트 | IP 기반 | IP 기반 (Downward API, CNI-agnostic) |
 | 업그레이드 시 비밀번호 | 재생성 위험 | Secret lookup으로 보존 |
 | Prometheus 지원 | bitnami/redis-exporter | oliver006/redis_exporter |
 
@@ -185,8 +185,7 @@ topologySpreadConstraints: []
 
 ### Pod가 Ready 상태가 되지 않을 때
 
-Readiness probe는 `cluster_state: ok` 확인 후 통과합니다.
-init Job이 완료되면 자동으로 Ready 상태가 됩니다 (최대 10분 대기).
+Readiness probe는 PING 응답만 확인합니다. 클러스터 초기화(init Job)와 무관하게 Redis 프로세스가 실행되면 Ready가 됩니다.
 
 ```bash
 # Pod 이벤트 확인

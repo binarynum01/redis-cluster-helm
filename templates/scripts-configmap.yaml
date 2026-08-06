@@ -12,8 +12,8 @@ data:
     #!/bin/bash
     set -e
 
-    # Use pod IP for cluster-announce-ip (stable within StatefulSet lifecycle)
-    POD_IP=$(hostname -i)
+    # POD_IP is injected via Kubernetes Downward API (status.podIP)
+    # This is CNI-agnostic: works with Calico, Flannel, AWS VPC CNI, Cilium, etc.
     echo "Starting Redis on ${HOSTNAME} with cluster-announce-ip: ${POD_IP}"
 
     ARGS=(
@@ -99,20 +99,45 @@ data:
       FQDNS+=("${FULLNAME}-${i}.${HEADLESS_SVC}.${NAMESPACE}.svc.${DOMAIN}")
     done
 
-    # 각 노드 PING 대기 후 IP 수집
-    echo "Waiting for all ${CLUSTER_NODES} Redis nodes to be ready..."
+    # 1단계: DNS 해결 (CoreDNS 전파 대기)
+    echo "=== Step 1: Resolving pod IPs via DNS ==="
     NODE_IPS=()
     for fqdn in "${FQDNS[@]}"; do
-      echo "  Waiting for ${fqdn}..."
-      while true; do
-        result=$(redis-cli -h "${fqdn}" -p "${REDIS_PORT}" ping 2>&1)
-        if echo "${result}" | grep -q "PONG"; then
-          ip=$(getent hosts "${fqdn}" 2>/dev/null | awk '{print $1}' | head -1)
-          echo "    -> OK (ip=${ip})"
-          NODE_IPS+=("${ip}:${REDIS_PORT}")
+      echo -n "  Resolving ${fqdn} ..."
+      ip=""
+      for attempt in $(seq 1 60); do
+        ip=$(getent hosts "${fqdn}" 2>/dev/null | awk '{print $1}' | head -1)
+        if [ -n "${ip}" ]; then
+          echo " -> ${ip}"
           break
         fi
-        echo "    -> ${result:-no response} (retrying in 3s)"
+        echo -n "."
+        sleep 2
+      done
+      if [ -z "${ip}" ]; then
+        echo " ERROR: DNS resolution failed after 120s"
+        exit 1
+      fi
+      NODE_IPS+=("${ip}:${REDIS_PORT}")
+    done
+
+    # 2단계: 각 노드 PING 대기 (IP 직접 사용)
+    echo ""
+    echo "=== Step 2: Waiting for Redis nodes to accept connections ==="
+    for entry in "${NODE_IPS[@]}"; do
+      ip="${entry%%:*}"
+      echo -n "  Pinging ${ip}:${REDIS_PORT} ..."
+      for attempt in $(seq 1 60); do
+        result=$(redis-cli -h "${ip}" -p "${REDIS_PORT}" ping 2>&1)
+        if echo "${result}" | grep -q "PONG"; then
+          echo " -> OK"
+          break
+        fi
+        if [ "${attempt}" -eq 60 ]; then
+          echo " ERROR: ${result:-no response} (timeout)"
+          exit 1
+        fi
+        echo -n "."
         sleep 3
       done
     done
@@ -120,9 +145,11 @@ data:
     echo "All nodes are ready."
     echo "Node IPs: ${NODE_IPS[*]}"
 
-    # 클러스터 이미 초기화된 경우 스킵
-    FIRST_NODE_HOST="${FQDNS[0]}"
-    cluster_info=$(redis-cli -h "${FIRST_NODE_HOST}" -p "${REDIS_PORT}" CLUSTER INFO 2>/dev/null) || true
+    # 3단계: 클러스터 이미 초기화된 경우 스킵
+    echo ""
+    echo "=== Step 3: Checking cluster state ==="
+    FIRST_IP="${NODE_IPS[0]%%:*}"
+    cluster_info=$(redis-cli -h "${FIRST_IP}" -p "${REDIS_PORT}" CLUSTER INFO 2>/dev/null) || true
     cluster_state=$(echo "$cluster_info" | grep cluster_state | tr -d '[:space:]' | cut -d: -f2)
     cluster_size=$(echo "$cluster_info"  | grep cluster_size  | tr -d '[:space:]' | cut -d: -f2)
 
@@ -131,9 +158,9 @@ data:
       exit 0
     fi
 
-    echo "Initializing Redis cluster (${CLUSTER_NODES} nodes, ${CLUSTER_REPLICAS} replica(s) per master)..."
-
-    # IP 기반으로 cluster create 실행 (hostname 방식보다 안정적)
+    # 4단계: 클러스터 생성
+    echo ""
+    echo "=== Step 4: Creating Redis cluster ==="
     redis-cli --cluster create \
       "${NODE_IPS[@]}" \
       --cluster-replicas "${CLUSTER_REPLICAS}" \
@@ -141,7 +168,8 @@ data:
 
     echo "Redis cluster initialized successfully."
 
-    echo "Verifying cluster..."
+    echo ""
+    echo "=== Step 5: Verifying cluster ==="
     sleep 3
-    redis-cli -h "${FIRST_NODE_HOST}" -p "${REDIS_PORT}" CLUSTER INFO
-    redis-cli -h "${FIRST_NODE_HOST}" -p "${REDIS_PORT}" CLUSTER NODES
+    redis-cli -h "${FIRST_IP}" -p "${REDIS_PORT}" CLUSTER INFO
+    redis-cli -h "${FIRST_IP}" -p "${REDIS_PORT}" CLUSTER NODES
