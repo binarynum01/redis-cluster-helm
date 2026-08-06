@@ -38,8 +38,6 @@ data:
     #!/bin/bash
     set -e
 
-    REDIS_STATUS_FILE=/tmp/.redis_cluster_check
-
     {{- if .Values.auth.enabled }}
     export REDISCLI_AUTH="${REDIS_PASSWORD}"
     {{- end }}
@@ -54,33 +52,6 @@ data:
 
     if [ "$response" != "PONG" ]; then
       echo "Unexpected response: ${response:-empty}"
-      exit 1
-    fi
-
-    # Once the cluster has been initialized once, verify it stays healthy.
-    # The status file persists in emptyDir across probe invocations but resets on pod restart.
-    if [ -f "$REDIS_STATUS_FILE" ]; then
-      cluster_state=$(
-        redis-cli -h localhost -p {{ .Values.redis.port }} \
-          CLUSTER INFO 2>/dev/null | grep "^cluster_state:" | tr -d '[:space:]' | cut -d: -f2
-      ) || true
-      if [ "${cluster_state}" != "ok" ]; then
-        echo "Cluster state degraded: ${cluster_state:-unknown}"
-        exit 1
-      fi
-      exit 0
-    fi
-
-    # Not yet confirmed healthy — check cluster state without blocking
-    cluster_state=$(
-      redis-cli -h localhost -p {{ .Values.redis.port }} \
-        CLUSTER INFO 2>/dev/null | grep "^cluster_state:" | tr -d '[:space:]' | cut -d: -f2
-    ) || true
-
-    if [ "${cluster_state}" = "ok" ]; then
-      touch "$REDIS_STATUS_FILE"
-    else
-      echo "Cluster not yet initialized (state=${cluster_state:-unknown}), waiting..."
       exit 1
     fi
 

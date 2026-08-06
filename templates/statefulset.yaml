@@ -135,8 +135,7 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 6
             successThreshold: 1
-            # Allow up to 10 minutes for cluster initialization to complete
-            failureThreshold: 60
+            failureThreshold: 5
           {{- with .Values.resources }}
           resources: {{- toYaml . | nindent 12 }}
           {{- end }}
