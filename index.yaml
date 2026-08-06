@@ -3,7 +3,28 @@ entries:
   redis-cluster:
   - apiVersion: v2
     appVersion: 8.10.0
-    created: "2026-08-06T04:12:53.978676851Z"
+    created: "2026-08-06T04:54:56.86356654Z"
+    description: Redis Cluster Helm chart using official Redis image (bitnami/redis-cluster
+      alternative)
+    digest: 14c082141efbdb3214ed02f7af775412e13c2e8d3d85ba12c22d9e3c2787ba52
+    home: https://redis.io
+    keywords:
+    - redis
+    - cluster
+    - keyvalue
+    - database
+    maintainers:
+    - name: custom
+    name: redis-cluster
+    sources:
+    - https://github.com/redis/redis
+    type: application
+    urls:
+    - https://binarynum01.github.io/redis-cluster-helm/redis-cluster-1.0.1.tgz
+    version: 1.0.1
+  - apiVersion: v2
+    appVersion: 8.10.0
+    created: "2026-08-06T04:54:56.859317995Z"
     description: Redis Cluster Helm chart using official Redis image (bitnami/redis-cluster
       alternative)
     digest: 0e0244cf1fed2044fc77ce336b8031d8b0cb0a32d2ea45a5c37e10203efd25f1
@@ -22,4 +43,4 @@ entries:
     urls:
     - https://binarynum01.github.io/redis-cluster-helm/redis-cluster-1.0.0.tgz
     version: 1.0.0
-generated: "2026-08-06T04:12:53.946349767Z"
+generated: "2026-08-06T04:54:56.854334004Z"
