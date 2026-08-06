@@ -27,6 +27,8 @@ spec:
         {{- if and .Values.auth.enabled (not .Values.auth.existingSecret) }}
         checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
         {{- end }}
+        traffic.sidecar.istio.io/excludeInboundPorts: "{{ .Values.redis.port }},{{ add .Values.redis.port 10000 }}"
+        traffic.sidecar.istio.io/excludeOutboundPorts: "{{ .Values.redis.port }},{{ add .Values.redis.port 10000 }}"
         {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
