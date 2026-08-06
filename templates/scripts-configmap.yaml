@@ -12,21 +12,16 @@ data:
     #!/bin/bash
     set -e
 
-    # Determine the pod's FQDN for cluster-announce-hostname.
-    # StatefulSet pods with a headless service get a stable DNS record:
-    #   <pod-name>.<headless-svc>.<namespace>.svc.<cluster-domain>
-    ANNOUNCE_HOSTNAME="${HOSTNAME}.${REDIS_HEADLESS_SVC}.${POD_NAMESPACE}.svc.${REDIS_CLUSTER_DOMAIN}"
+    # Use pod IP for cluster-announce-ip (stable within StatefulSet lifecycle)
+    POD_IP=$(hostname -i)
+    echo "Starting Redis on ${HOSTNAME} with cluster-announce-ip: ${POD_IP}"
 
-    echo "Starting Redis with cluster-announce-hostname: ${ANNOUNCE_HOSTNAME}"
-
-    # Build redis-server arguments
     ARGS=(
       /etc/redis/redis.conf
-      --cluster-announce-hostname "${ANNOUNCE_HOSTNAME}"
+      --cluster-announce-ip "${POD_IP}"
     )
 
     {{- if .Values.auth.enabled }}
-    # Set password via environment variable
     if [ -n "${REDIS_PASSWORD}" ]; then
       ARGS+=(--requirepass "${REDIS_PASSWORD}" --masterauth "${REDIS_PASSWORD}")
     fi
@@ -98,25 +93,23 @@ data:
     export REDISCLI_AUTH="${REDIS_PASSWORD}"
     {{- end }}
 
-    # Build the list of all node addresses
-    NODES=()
+    # FQDN 목록 생성
+    FQDNS=()
     for i in $(seq 0 $(( CLUSTER_NODES - 1 ))); do
-      NODES+=("${FULLNAME}-${i}.${HEADLESS_SVC}.${NAMESPACE}.svc.${DOMAIN}:${REDIS_PORT}")
+      FQDNS+=("${FULLNAME}-${i}.${HEADLESS_SVC}.${NAMESPACE}.svc.${DOMAIN}")
     done
 
-    echo "Node addresses to connect:"
-    for node in "${NODES[@]}"; do echo "  ${node}"; done
-    echo ""
-
+    # 각 노드 PING 대기 후 IP 수집
     echo "Waiting for all ${CLUSTER_NODES} Redis nodes to be ready..."
-    for node in "${NODES[@]}"; do
-      host="${node%%:*}"
-      port="${node##*:}"
-      echo "  Waiting for ${host}..."
-      until true; do
-        result=$(redis-cli -h "${host}" -p "${port}" ping 2>&1)
+    NODE_IPS=()
+    for fqdn in "${FQDNS[@]}"; do
+      echo "  Waiting for ${fqdn}..."
+      while true; do
+        result=$(redis-cli -h "${fqdn}" -p "${REDIS_PORT}" ping 2>&1)
         if echo "${result}" | grep -q "PONG"; then
-          echo "    -> OK (${result})"
+          ip=$(getent hosts "${fqdn}" 2>/dev/null | awk '{print $1}' | head -1)
+          echo "    -> OK (ip=${ip})"
+          NODE_IPS+=("${ip}:${REDIS_PORT}")
           break
         fi
         echo "    -> ${result:-no response} (retrying in 3s)"
@@ -125,33 +118,29 @@ data:
     done
 
     echo "All nodes are ready."
+    echo "Node IPs: ${NODE_IPS[*]}"
 
-    # Check if the cluster is already initialized
-    FIRST_NODE_HOST="${FULLNAME}-0.${HEADLESS_SVC}.${NAMESPACE}.svc.${DOMAIN}"
+    # 클러스터 이미 초기화된 경우 스킵
+    FIRST_NODE_HOST="${FQDNS[0]}"
     cluster_info=$(redis-cli -h "${FIRST_NODE_HOST}" -p "${REDIS_PORT}" CLUSTER INFO 2>/dev/null) || true
     cluster_state=$(echo "$cluster_info" | grep cluster_state | tr -d '[:space:]' | cut -d: -f2)
-    cluster_size=$(echo "$cluster_info" | grep cluster_size | tr -d '[:space:]' | cut -d: -f2)
+    cluster_size=$(echo "$cluster_info"  | grep cluster_size  | tr -d '[:space:]' | cut -d: -f2)
 
     if [ "${cluster_state}" = "ok" ] && [ "${cluster_size:-0}" -gt "0" ]; then
-      echo "Redis cluster is already initialized (state=${cluster_state}, size=${cluster_size}). Skipping creation."
+      echo "Cluster already initialized (state=${cluster_state}, size=${cluster_size}). Skipping."
       exit 0
     fi
 
-    echo "Initializing Redis cluster with ${CLUSTER_NODES} nodes and ${CLUSTER_REPLICAS} replica(s) per master..."
-    echo "Node addresses:"
-    for node in "${NODES[@]}"; do
-      echo "  - ${node}"
-    done
+    echo "Initializing Redis cluster (${CLUSTER_NODES} nodes, ${CLUSTER_REPLICAS} replica(s) per master)..."
 
-    # Create the cluster
+    # IP 기반으로 cluster create 실행 (hostname 방식보다 안정적)
     redis-cli --cluster create \
-      "${NODES[@]}" \
+      "${NODE_IPS[@]}" \
       --cluster-replicas "${CLUSTER_REPLICAS}" \
       --cluster-yes
 
     echo "Redis cluster initialized successfully."
 
-    # Verify cluster state
     echo "Verifying cluster..."
     sleep 3
     redis-cli -h "${FIRST_NODE_HOST}" -p "${REDIS_PORT}" CLUSTER INFO

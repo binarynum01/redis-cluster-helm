@@ -14,9 +14,6 @@ data:
     cluster-config-file /data/nodes.conf
     cluster-node-timeout {{ index .Values.redis.config "cluster-node-timeout" | default "5000" }}
 
-    # Use hostnames for cluster announcements (stable across pod restarts in Kubernetes)
-    cluster-preferred-endpoint-type hostname
-
     # Persistence
     appendonly yes
     appendfsync everysec
