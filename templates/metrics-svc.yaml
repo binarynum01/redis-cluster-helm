@@ -1,0 +1,21 @@
+{{- if .Values.metrics.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "redis-cluster.fullname" . }}-metrics
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "redis-cluster.labels" . | nindent 4 }}
+    app.kubernetes.io/component: metrics
+  {{- with .Values.commonAnnotations }}
+  annotations: {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: metrics
+      port: {{ .Values.metrics.port }}
+      targetPort: metrics
+      protocol: TCP
+  selector: {{- include "redis-cluster.selectorLabels" . | nindent 4 }}
+{{- end }}

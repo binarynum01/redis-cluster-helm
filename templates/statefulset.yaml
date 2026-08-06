@@ -1,0 +1,223 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "redis-cluster.fullname" . }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels: {{- include "redis-cluster.labels" . | nindent 4 }}
+  {{- with .Values.commonAnnotations }}
+  annotations: {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  replicas: {{ .Values.cluster.nodes }}
+  serviceName: {{ include "redis-cluster.headlessSvcName" . }}
+  podManagementPolicy: Parallel
+  updateStrategy: {{- toYaml .Values.updateStrategy | nindent 4 }}
+  selector:
+    matchLabels: {{- include "redis-cluster.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "redis-cluster.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/scripts: {{ include (print $.Template.BasePath "/scripts-configmap.yaml") . | sha256sum }}
+        {{- if and .Values.auth.enabled (not .Values.auth.existingSecret) }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- end }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- include "redis-cluster.imagePullSecrets" . | nindent 6 }}
+      serviceAccountName: {{ include "redis-cluster.serviceAccountName" . }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+      {{- if .Values.podSecurityContext.enabled }}
+      securityContext:
+        fsGroup: {{ .Values.podSecurityContext.fsGroup }}
+        runAsUser: {{ .Values.podSecurityContext.runAsUser }}
+        runAsNonRoot: {{ .Values.podSecurityContext.runAsNonRoot }}
+      {{- end }}
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . | quote }}
+      {{- end }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      {{- if .Values.affinity }}
+      affinity: {{- toYaml .Values.affinity | nindent 8 }}
+      {{- else if ne .Values.podAntiAffinityPreset "none" }}
+      affinity:
+        {{- include "redis-cluster.podAntiAffinity" . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.initContainers }}
+      initContainers: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: redis
+          image: {{ include "redis-cluster.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- if .Values.containerSecurityContext.enabled }}
+          securityContext:
+            runAsNonRoot: {{ .Values.containerSecurityContext.runAsNonRoot }}
+            runAsUser: {{ .Values.containerSecurityContext.runAsUser }}
+            allowPrivilegeEscalation: {{ .Values.containerSecurityContext.allowPrivilegeEscalation }}
+            readOnlyRootFilesystem: {{ .Values.containerSecurityContext.readOnlyRootFilesystem }}
+            capabilities: {{- toYaml .Values.containerSecurityContext.capabilities | nindent 14 }}
+          {{- end }}
+          command: ["/bin/bash", "/scripts/startup.sh"]
+          ports:
+            - name: redis
+              containerPort: {{ .Values.redis.port }}
+              protocol: TCP
+            - name: redis-bus
+              containerPort: {{ add .Values.redis.port 10000 }}
+              protocol: TCP
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: REDIS_HEADLESS_SVC
+              value: {{ include "redis-cluster.headlessSvcName" . | quote }}
+            - name: REDIS_CLUSTER_DOMAIN
+              value: "cluster.local"
+            - name: REDIS_FULLNAME
+              value: {{ include "redis-cluster.fullname" . | quote }}
+            {{- if .Values.auth.enabled }}
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "redis-cluster.secretName" . }}
+                  key: {{ include "redis-cluster.secretPasswordKey" . }}
+            {{- end }}
+            {{- with .Values.extraEnvVars }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- if or .Values.extraEnvVarsCM .Values.extraEnvVarsSecret }}
+          envFrom:
+            {{- if .Values.extraEnvVarsCM }}
+            - configMapRef:
+                name: {{ .Values.extraEnvVarsCM }}
+            {{- end }}
+            {{- if .Values.extraEnvVarsSecret }}
+            - secretRef:
+                name: {{ .Values.extraEnvVarsSecret }}
+            {{- end }}
+          {{- end }}
+          livenessProbe:
+            exec:
+              command:
+                - /bin/bash
+                - /scripts/ping_liveness_local.sh
+                - "5"
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 6
+            successThreshold: 1
+            failureThreshold: 5
+          readinessProbe:
+            exec:
+              command:
+                - /bin/bash
+                - /scripts/ping_readiness_local.sh
+                - "5"
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 6
+            successThreshold: 1
+            # Allow up to 10 minutes for cluster initialization to complete
+            failureThreshold: 60
+          {{- with .Values.resources }}
+          resources: {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: redis-config
+              mountPath: /etc/redis
+            - name: redis-scripts
+              mountPath: /scripts
+            - name: redis-data
+              mountPath: /data
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+        {{- if .Values.metrics.enabled }}
+        - name: metrics
+          image: {{ include "redis-cluster.metrics.image" . }}
+          imagePullPolicy: {{ .Values.metrics.image.pullPolicy }}
+          env:
+            - name: REDIS_ADDR
+              value: "redis://localhost:{{ .Values.redis.port }}"
+            {{- if .Values.auth.enabled }}
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "redis-cluster.secretName" . }}
+                  key: {{ include "redis-cluster.secretPasswordKey" . }}
+            {{- end }}
+          ports:
+            - name: metrics
+              containerPort: {{ .Values.metrics.port }}
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: metrics
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: metrics
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          {{- with .Values.metrics.resources }}
+          resources: {{- toYaml . | nindent 12 }}
+          {{- end }}
+        {{- end }}
+        {{- with .Values.sidecars }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      volumes:
+        - name: redis-config
+          configMap:
+            name: {{ include "redis-cluster.fullname" . }}-config
+        - name: redis-scripts
+          configMap:
+            name: {{ include "redis-cluster.fullname" . }}-scripts
+            defaultMode: 0755
+        {{- if not .Values.persistence.enabled }}
+        - name: redis-data
+          emptyDir: {}
+        {{- end }}
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+  {{- if .Values.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata:
+        name: redis-data
+        labels: {{- include "redis-cluster.selectorLabels" . | nindent 10 }}
+        {{- with .Values.persistence.annotations }}
+        annotations: {{- toYaml . | nindent 10 }}
+        {{- end }}
+      spec:
+        accessModes:
+          - {{ .Values.persistence.accessMode | quote }}
+        resources:
+          requests:
+            storage: {{ .Values.persistence.size | quote }}
+        {{- $storageClass := .Values.persistence.storageClass | default .Values.global.storageClass }}
+        {{- if $storageClass }}
+        storageClassName: {{ $storageClass | quote }}
+        {{- end }}
+  {{- end }}

@@ -1,0 +1,60 @@
+Redis Cluster has been deployed!
+
+Chart version: {{ .Chart.Version }}
+Redis version: {{ .Chart.AppVersion }}
+Release name: {{ .Release.Name }}
+Namespace: {{ .Release.Namespace }}
+
+Cluster topology:
+  Nodes : {{ .Values.cluster.nodes }}
+  Masters : {{ div .Values.cluster.nodes (add .Values.cluster.replicas 1) }}
+  Replicas per master: {{ .Values.cluster.replicas }}
+
+{{- if .Values.cluster.init }}
+
+NOTE: A Kubernetes Job ({{ include "redis-cluster.fullname" . }}-init) will run after installation
+      to initialize the Redis cluster. You can monitor it with:
+
+  kubectl get job {{ include "redis-cluster.fullname" . }}-init -n {{ .Release.Namespace }}
+  kubectl logs -l job-name={{ include "redis-cluster.fullname" . }}-init -n {{ .Release.Namespace }}
+
+{{- end }}
+
+Wait for all pods to be ready:
+
+  kubectl wait pod -l app.kubernetes.io/instance={{ .Release.Name }} \
+    --for=condition=Ready \
+    --timeout=300s \
+    -n {{ .Release.Namespace }}
+
+Connect to Redis cluster from inside the cluster:
+
+  redis-cli -h {{ include "redis-cluster.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local \
+    -p {{ .Values.service.ports.redis }} \
+    -c {{- if .Values.auth.enabled }} \
+    -a $REDIS_PASSWORD {{- end }} \
+    CLUSTER INFO
+
+{{- if .Values.auth.enabled }}
+
+Get the Redis password:
+
+  kubectl get secret {{ include "redis-cluster.secretName" . }} \
+    -n {{ .Release.Namespace }} \
+    -o jsonpath='{.data.{{ include "redis-cluster.secretPasswordKey" . }}}' | base64 -d
+
+{{- end }}
+
+Check cluster status from a Redis pod:
+
+  kubectl exec -it {{ include "redis-cluster.fullname" . }}-0 \
+    -n {{ .Release.Namespace }} -- \
+    redis-cli -p {{ .Values.redis.port }} \
+    {{- if .Values.auth.enabled }}-a $REDIS_PASSWORD {{ end }}\
+    CLUSTER NODES
+
+{{- if .Values.metrics.enabled }}
+
+Metrics endpoint: {{ include "redis-cluster.fullname" . }}-metrics:{{ .Values.metrics.port }}
+
+{{- end }}

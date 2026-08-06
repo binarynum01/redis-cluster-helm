@@ -1,0 +1,179 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "redis-cluster.fullname" . }}-scripts
+  namespace: {{ .Release.Namespace | quote }}
+  labels: {{- include "redis-cluster.labels" . | nindent 4 }}
+  {{- with .Values.commonAnnotations }}
+  annotations: {{- toYaml . | nindent 4 }}
+  {{- end }}
+data:
+  startup.sh: |-
+    #!/bin/bash
+    set -e
+
+    # Determine the pod's FQDN for cluster-announce-hostname.
+    # StatefulSet pods with a headless service get a stable DNS record:
+    #   <pod-name>.<headless-svc>.<namespace>.svc.<cluster-domain>
+    ANNOUNCE_HOSTNAME="${HOSTNAME}.${REDIS_HEADLESS_SVC}.${POD_NAMESPACE}.svc.${REDIS_CLUSTER_DOMAIN}"
+
+    echo "Starting Redis with cluster-announce-hostname: ${ANNOUNCE_HOSTNAME}"
+
+    # Build redis-server arguments
+    ARGS=(
+      /etc/redis/redis.conf
+      --cluster-announce-hostname "${ANNOUNCE_HOSTNAME}"
+    )
+
+    {{- if .Values.auth.enabled }}
+    # Set password via environment variable
+    if [ -n "${REDIS_PASSWORD}" ]; then
+      ARGS+=(--requirepass "${REDIS_PASSWORD}" --masterauth "${REDIS_PASSWORD}")
+    fi
+    {{- end }}
+
+    exec redis-server "${ARGS[@]}"
+
+  ping_readiness_local.sh: |-
+    #!/bin/bash
+    set -e
+
+    REDIS_STATUS_FILE=/tmp/.redis_cluster_check
+
+    {{- if .Values.auth.enabled }}
+    export REDISCLI_AUTH="${REDIS_PASSWORD}"
+    {{- end }}
+
+    response=$(
+      timeout -s TERM "$1" \
+      redis-cli \
+        -h localhost \
+        -p {{ .Values.redis.port }} \
+        ping
+    )
+
+    if [ "$response" != "PONG" ]; then
+      echo "Unexpected response: ${response:-empty}"
+      exit 1
+    fi
+
+    # Once the cluster has been initialized once, verify it stays healthy.
+    # The status file persists in emptyDir across probe invocations but resets on pod restart.
+    if [ -f "$REDIS_STATUS_FILE" ]; then
+      cluster_state=$(
+        redis-cli -h localhost -p {{ .Values.redis.port }} \
+          CLUSTER INFO 2>/dev/null | grep "^cluster_state:" | tr -d '[:space:]' | cut -d: -f2
+      ) || true
+      if [ "${cluster_state}" != "ok" ]; then
+        echo "Cluster state degraded: ${cluster_state:-unknown}"
+        exit 1
+      fi
+      exit 0
+    fi
+
+    # Not yet confirmed healthy — check cluster state without blocking
+    cluster_state=$(
+      redis-cli -h localhost -p {{ .Values.redis.port }} \
+        CLUSTER INFO 2>/dev/null | grep "^cluster_state:" | tr -d '[:space:]' | cut -d: -f2
+    ) || true
+
+    if [ "${cluster_state}" = "ok" ]; then
+      touch "$REDIS_STATUS_FILE"
+    else
+      echo "Cluster not yet initialized (state=${cluster_state:-unknown}), waiting..."
+      exit 1
+    fi
+
+  ping_liveness_local.sh: |-
+    #!/bin/bash
+    set -e
+
+    {{- if .Values.auth.enabled }}
+    export REDISCLI_AUTH="${REDIS_PASSWORD}"
+    {{- end }}
+
+    response=$(
+      timeout -s TERM "$1" \
+      redis-cli \
+        -h localhost \
+        -p {{ .Values.redis.port }} \
+        ping
+    )
+
+    if [ "$?" -eq "124" ]; then
+      echo "Timed out"
+      exit 1
+    fi
+
+    first_word=$(echo "$response" | awk '{print $1}')
+    if [ "$response" != "PONG" ] && [ "$first_word" != "LOADING" ] && [ "$first_word" != "MASTERDOWN" ]; then
+      echo "Unexpected response: $response"
+      exit 1
+    fi
+
+  cluster-init.sh: |-
+    #!/bin/bash
+    set -e
+
+    REDIS_PORT={{ .Values.redis.port }}
+    CLUSTER_NODES={{ .Values.cluster.nodes }}
+    CLUSTER_REPLICAS={{ .Values.cluster.replicas }}
+    NAMESPACE="${POD_NAMESPACE}"
+    HEADLESS_SVC="${REDIS_HEADLESS_SVC}"
+    DOMAIN="${REDIS_CLUSTER_DOMAIN}"
+    FULLNAME="${REDIS_FULLNAME}"
+
+    {{- if .Values.auth.enabled }}
+    export REDISCLI_AUTH="${REDIS_PASSWORD}"
+    {{- end }}
+
+    # Build the list of all node addresses
+    NODES=()
+    for i in $(seq 0 $(( CLUSTER_NODES - 1 ))); do
+      NODES+=("${FULLNAME}-${i}.${HEADLESS_SVC}.${NAMESPACE}.svc.${DOMAIN}:${REDIS_PORT}")
+    done
+
+    echo "Waiting for all ${CLUSTER_NODES} Redis nodes to be ready..."
+    for node in "${NODES[@]}"; do
+      host="${node%%:*}"
+      port="${node##*:}"
+      echo -n "  Waiting for ${host}..."
+      until redis-cli -h "${host}" -p "${port}" ping 2>/dev/null | grep -q PONG; do
+        echo -n "."
+        sleep 2
+      done
+      echo " OK"
+    done
+
+    echo "All nodes are ready."
+
+    # Check if the cluster is already initialized
+    FIRST_NODE_HOST="${FULLNAME}-0.${HEADLESS_SVC}.${NAMESPACE}.svc.${DOMAIN}"
+    cluster_info=$(redis-cli -h "${FIRST_NODE_HOST}" -p "${REDIS_PORT}" CLUSTER INFO 2>/dev/null) || true
+    cluster_state=$(echo "$cluster_info" | grep cluster_state | tr -d '[:space:]' | cut -d: -f2)
+    cluster_size=$(echo "$cluster_info" | grep cluster_size | tr -d '[:space:]' | cut -d: -f2)
+
+    if [ "${cluster_state}" = "ok" ] && [ "${cluster_size:-0}" -gt "0" ]; then
+      echo "Redis cluster is already initialized (state=${cluster_state}, size=${cluster_size}). Skipping creation."
+      exit 0
+    fi
+
+    echo "Initializing Redis cluster with ${CLUSTER_NODES} nodes and ${CLUSTER_REPLICAS} replica(s) per master..."
+    echo "Node addresses:"
+    for node in "${NODES[@]}"; do
+      echo "  - ${node}"
+    done
+
+    # Create the cluster
+    redis-cli --cluster create \
+      "${NODES[@]}" \
+      --cluster-replicas "${CLUSTER_REPLICAS}" \
+      --cluster-yes
+
+    echo "Redis cluster initialized successfully."
+
+    # Verify cluster state
+    echo "Verifying cluster..."
+    sleep 3
+    redis-cli -h "${FIRST_NODE_HOST}" -p "${REDIS_PORT}" CLUSTER INFO
+    redis-cli -h "${FIRST_NODE_HOST}" -p "${REDIS_PORT}" CLUSTER NODES

@@ -1,0 +1,195 @@
+## @section Global parameters
+global:
+  imageRegistry: ""
+  imagePullSecrets: []
+  storageClass: ""
+
+## @section Naming
+nameOverride: ""
+fullnameOverride: ""
+
+## @section Image
+## Official Redis image from Docker Hub
+image:
+  registry: docker.io
+  repository: redis
+  tag: "8.10.0"
+  pullPolicy: IfNotPresent
+  pullSecrets: []
+
+## @section Authentication
+auth:
+  ## @param auth.enabled Enable Redis password authentication
+  enabled: true
+  ## @param auth.password Redis password. If empty, a random password is generated.
+  password: ""
+  ## @param auth.existingSecret Name of existing secret with Redis credentials
+  existingSecret: ""
+  ## @param auth.existingSecretPasswordKey Key in existing secret for Redis password
+  existingSecretPasswordKey: "redis-password"
+
+## @section Cluster configuration
+cluster:
+  ## @param cluster.nodes Total number of Redis cluster nodes (masters + replicas)
+  ## Formula: nodes = masters * (1 + replicas)
+  ## Default: 6 = 3 masters * (1 + 1 replica)
+  nodes: 6
+  ## @param cluster.replicas Number of replicas per master
+  replicas: 1
+  ## @param cluster.init Initialize the cluster on first install
+  init: true
+
+## @section Redis configuration
+redis:
+  ## @param redis.port Redis port
+  port: 6379
+  ## @param redis.config Additional redis.conf settings (key: value map)
+  config:
+    ## Cluster timeouts and limits
+    cluster-node-timeout: "5000"
+    ## Memory management
+    ## maxmemory: "256mb"
+    ## maxmemory-policy: "allkeys-lru"
+    ## Slow log
+    slowlog-log-slower-than: "10000"
+    slowlog-max-len: "128"
+  ## @param redis.extraConfig Raw redis.conf extra configuration appended verbatim
+  extraConfig: ""
+
+## @section Persistence
+persistence:
+  enabled: true
+  ## @param persistence.storageClass StorageClass for PVCs (empty = cluster default)
+  storageClass: ""
+  accessMode: ReadWriteOnce
+  size: 8Gi
+  ## @param persistence.annotations PVC annotations
+  annotations: {}
+
+## @section Resources
+resources: {}
+  # requests:
+  #   cpu: 100m
+  #   memory: 128Mi
+  # limits:
+  #   cpu: 500m
+  #   memory: 512Mi
+
+## @section Pod security context
+podSecurityContext:
+  enabled: true
+  fsGroup: 1000
+  runAsUser: 1000
+  runAsNonRoot: true
+
+## @section Container security context
+containerSecurityContext:
+  enabled: true
+  runAsNonRoot: true
+  runAsUser: 1000
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false
+  capabilities:
+    drop: ["ALL"]
+
+## @section Service
+service:
+  type: ClusterIP
+  ports:
+    redis: 6379
+  ## @param service.annotations Service annotations
+  annotations: {}
+  ## @param service.loadBalancerIP LoadBalancer IP (only used when type=LoadBalancer)
+  loadBalancerIP: ""
+  ## @param service.nodePort NodePort (only used when type=NodePort)
+  nodePort: ""
+
+## @section Headless service
+headlessService:
+  annotations: {}
+
+## @section Pod Disruption Budget
+pdb:
+  create: true
+  ## @param pdb.minAvailable Minimum number of available pods (overrides maxUnavailable)
+  minAvailable: ""
+  ## @param pdb.maxUnavailable Maximum number of unavailable pods
+  maxUnavailable: 1
+
+## @section Network Policy
+networkPolicy:
+  enabled: false
+  ## @param networkPolicy.allowExternal Allow access from pods without specific label
+  allowExternal: true
+  extraIngress: []
+  extraEgress: []
+
+## @section Service Account
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+  automountServiceAccountToken: false
+
+## @section Cluster initialization Job
+## Runs as a post-install Helm hook to initialize the Redis cluster
+initJob:
+  activeDeadlineSeconds: 600
+  backoffLimit: 10
+  annotations: {}
+  ## @param initJob.resources Resource requests/limits for the init Job
+  resources: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+## @section Metrics / Prometheus exporter
+metrics:
+  enabled: false
+  image:
+    registry: docker.io
+    repository: oliver006/redis_exporter
+    tag: "v1.62.0"
+    pullPolicy: IfNotPresent
+  ## @param metrics.port Prometheus exporter port
+  port: 9121
+  resources: {}
+  ## @param metrics.serviceMonitor.enabled Create Prometheus ServiceMonitor
+  serviceMonitor:
+    enabled: false
+    namespace: ""
+    interval: "30s"
+    scrapeTimeout: "10s"
+    labels: {}
+    annotations: {}
+
+## @section Scheduling
+## Affinity, tolerations, nodeSelector applied to Redis pods
+affinity: {}
+tolerations: []
+nodeSelector: {}
+topologySpreadConstraints: []
+podAntiAffinityPreset: soft
+podLabels: {}
+podAnnotations: {}
+priorityClassName: ""
+terminationGracePeriodSeconds: 30
+
+## @section Update strategy
+updateStrategy:
+  type: RollingUpdate
+
+## @section Extra volumes/mounts
+extraVolumes: []
+extraVolumeMounts: []
+extraEnvVars: []
+extraEnvVarsCM: ""
+extraEnvVarsSecret: ""
+
+## @section Init containers / Sidecars
+initContainers: []
+sidecars: []
+
+## @section Common labels and annotations
+commonLabels: {}
+commonAnnotations: {}

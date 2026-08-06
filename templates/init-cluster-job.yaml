@@ -1,0 +1,86 @@
+{{- if .Values.cluster.init }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "redis-cluster.fullname" . }}-init
+  namespace: {{ .Release.Namespace | quote }}
+  labels: {{- include "redis-cluster.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+    {{- with .Values.initJob.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- with .Values.commonAnnotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  activeDeadlineSeconds: {{ .Values.initJob.activeDeadlineSeconds }}
+  backoffLimit: {{ .Values.initJob.backoffLimit }}
+  template:
+    metadata:
+      labels:
+        {{- include "redis-cluster.selectorLabels" . | nindent 8 }}
+        job-type: cluster-init
+    spec:
+      restartPolicy: OnFailure
+      {{- include "redis-cluster.imagePullSecrets" . | nindent 6 }}
+      serviceAccountName: {{ include "redis-cluster.serviceAccountName" . }}
+      {{- if .Values.podSecurityContext.enabled }}
+      securityContext:
+        fsGroup: {{ .Values.podSecurityContext.fsGroup }}
+        runAsUser: {{ .Values.podSecurityContext.runAsUser }}
+        runAsNonRoot: {{ .Values.podSecurityContext.runAsNonRoot }}
+      {{- end }}
+      {{- with .Values.initJob.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.initJob.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.initJob.affinity }}
+      affinity: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: cluster-init
+          image: {{ include "redis-cluster.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- if .Values.containerSecurityContext.enabled }}
+          securityContext:
+            runAsNonRoot: {{ .Values.containerSecurityContext.runAsNonRoot }}
+            runAsUser: {{ .Values.containerSecurityContext.runAsUser }}
+            allowPrivilegeEscalation: {{ .Values.containerSecurityContext.allowPrivilegeEscalation }}
+            capabilities: {{- toYaml .Values.containerSecurityContext.capabilities | nindent 14 }}
+          {{- end }}
+          command: ["/bin/bash", "/scripts/cluster-init.sh"]
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: REDIS_HEADLESS_SVC
+              value: {{ include "redis-cluster.headlessSvcName" . | quote }}
+            - name: REDIS_CLUSTER_DOMAIN
+              value: "cluster.local"
+            - name: REDIS_FULLNAME
+              value: {{ include "redis-cluster.fullname" . | quote }}
+            {{- if .Values.auth.enabled }}
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "redis-cluster.secretName" . }}
+                  key: {{ include "redis-cluster.secretPasswordKey" . }}
+            {{- end }}
+          {{- with .Values.initJob.resources }}
+          resources: {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: redis-scripts
+              mountPath: /scripts
+      volumes:
+        - name: redis-scripts
+          configMap:
+            name: {{ include "redis-cluster.fullname" . }}-scripts
+            defaultMode: 0755
+{{- end }}

@@ -1,0 +1,48 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "redis-cluster.fullname" . }}-config
+  namespace: {{ .Release.Namespace | quote }}
+  labels: {{- include "redis-cluster.labels" . | nindent 4 }}
+  {{- with .Values.commonAnnotations }}
+  annotations: {{- toYaml . | nindent 4 }}
+  {{- end }}
+data:
+  redis.conf: |
+    # Redis Cluster configuration
+    cluster-enabled yes
+    cluster-config-file /data/nodes.conf
+    cluster-node-timeout {{ index .Values.redis.config "cluster-node-timeout" | default "5000" }}
+
+    # Use hostnames for cluster announcements (stable across pod restarts in Kubernetes)
+    cluster-preferred-endpoint-type hostname
+
+    # Persistence
+    appendonly yes
+    appendfsync everysec
+    dir /data
+
+    # Bind to all interfaces inside the container
+    bind 0.0.0.0
+
+    # Port
+    port {{ .Values.redis.port }}
+    cluster-announce-port {{ .Values.redis.port }}
+    cluster-announce-bus-port {{ add .Values.redis.port 10000 }}
+
+    # Logging
+    loglevel notice
+    logfile ""
+
+    # Protected mode off (rely on Kubernetes NetworkPolicy for access control)
+    protected-mode no
+
+    {{- range $key, $value := .Values.redis.config }}
+    {{- if ne $key "cluster-node-timeout" }}
+    {{ $key }} {{ $value }}
+    {{- end }}
+    {{- end }}
+
+    {{- if .Values.redis.extraConfig }}
+    {{ .Values.redis.extraConfig | nindent 4 }}
+    {{- end }}

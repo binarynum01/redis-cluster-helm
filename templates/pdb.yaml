@@ -1,0 +1,19 @@
+{{- if .Values.pdb.create }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "redis-cluster.fullname" . }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels: {{- include "redis-cluster.labels" . | nindent 4 }}
+  {{- with .Values.commonAnnotations }}
+  annotations: {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  selector:
+    matchLabels: {{- include "redis-cluster.selectorLabels" . | nindent 6 }}
+  {{- if .Values.pdb.minAvailable }}
+  minAvailable: {{ .Values.pdb.minAvailable }}
+  {{- else if .Values.pdb.maxUnavailable }}
+  maxUnavailable: {{ .Values.pdb.maxUnavailable }}
+  {{- end }}
+{{- end }}

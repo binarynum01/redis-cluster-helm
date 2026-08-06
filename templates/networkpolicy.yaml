@@ -1,0 +1,71 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "redis-cluster.fullname" . }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels: {{- include "redis-cluster.labels" . | nindent 4 }}
+  {{- with .Values.commonAnnotations }}
+  annotations: {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  podSelector:
+    matchLabels: {{- include "redis-cluster.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow inter-cluster communication (Redis port + bus port)
+    - from:
+        - podSelector:
+            matchLabels: {{- include "redis-cluster.selectorLabels" . | nindent 14 }}
+      ports:
+        - port: {{ .Values.redis.port }}
+          protocol: TCP
+        - port: {{ add .Values.redis.port 10000 }}
+          protocol: TCP
+    {{- if .Values.networkPolicy.allowExternal }}
+    # Allow from any pod in the namespace
+    - from:
+        - podSelector: {}
+      ports:
+        - port: {{ .Values.redis.port }}
+          protocol: TCP
+    {{- else }}
+    # Allow only from pods with the client label
+    - from:
+        - podSelector:
+            matchLabels:
+              {{ include "redis-cluster.fullname" . }}-client: "true"
+      ports:
+        - port: {{ .Values.redis.port }}
+          protocol: TCP
+    {{- end }}
+    {{- if .Values.metrics.enabled }}
+    - ports:
+        - port: {{ .Values.metrics.port }}
+          protocol: TCP
+    {{- end }}
+    {{- with .Values.networkPolicy.extraIngress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  egress:
+    # Allow inter-cluster communication
+    - to:
+        - podSelector:
+            matchLabels: {{- include "redis-cluster.selectorLabels" . | nindent 14 }}
+      ports:
+        - port: {{ .Values.redis.port }}
+          protocol: TCP
+        - port: {{ add .Values.redis.port 10000 }}
+          protocol: TCP
+    # Allow DNS
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    {{- with .Values.networkPolicy.extraEgress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}

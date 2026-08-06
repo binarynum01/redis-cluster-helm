@@ -1,0 +1,16 @@
+apiVersion: v2
+name: redis-cluster
+description: Redis Cluster Helm chart using official Redis image (bitnami/redis-cluster alternative)
+type: application
+version: 1.0.0
+appVersion: "8.10.0"
+keywords:
+  - redis
+  - cluster
+  - keyvalue
+  - database
+home: https://redis.io
+sources:
+  - https://github.com/redis/redis
+maintainers:
+  - name: custom

@@ -1,0 +1,27 @@
+{{- if and .Values.metrics.enabled .Values.metrics.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "redis-cluster.fullname" . }}
+  namespace: {{ .Values.metrics.serviceMonitor.namespace | default .Release.Namespace | quote }}
+  labels:
+    {{- include "redis-cluster.labels" . | nindent 4 }}
+    {{- with .Values.metrics.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .Values.metrics.serviceMonitor.annotations }}
+  annotations: {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  endpoints:
+    - port: metrics
+      interval: {{ .Values.metrics.serviceMonitor.interval }}
+      scrapeTimeout: {{ .Values.metrics.serviceMonitor.scrapeTimeout }}
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace | quote }}
+  selector:
+    matchLabels:
+      {{- include "redis-cluster.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: metrics
+{{- end }}

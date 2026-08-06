@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "redis-cluster.headlessSvcName" . }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels: {{- include "redis-cluster.labels" . | nindent 4 }}
+  annotations:
+    service.alpha.kubernetes.io/tolerate-unready-endpoints: "true"
+    {{- with .Values.headlessService.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- with .Values.commonAnnotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  type: ClusterIP
+  clusterIP: None
+  publishNotReadyAddresses: true
+  ports:
+    - name: redis
+      port: {{ .Values.redis.port }}
+      targetPort: redis
+      protocol: TCP
+    - name: redis-bus
+      port: {{ add .Values.redis.port 10000 }}
+      targetPort: redis-bus
+      protocol: TCP
+  selector: {{- include "redis-cluster.selectorLabels" . | nindent 4 }}
