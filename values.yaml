@@ -39,6 +39,9 @@ cluster:
   ## @param cluster.init Initialize the cluster on first install
   init: true
 
+## @param clusterDomain Kubernetes cluster domain (used for headless service DNS)
+clusterDomain: cluster.local
+
 ## @section Redis configuration
 redis:
   ## @param redis.port Redis port

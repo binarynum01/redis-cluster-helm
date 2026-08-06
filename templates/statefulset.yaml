@@ -96,7 +96,7 @@ spec:
             - name: REDIS_HEADLESS_SVC
               value: {{ include "redis-cluster.headlessSvcName" . | quote }}
             - name: REDIS_CLUSTER_DOMAIN
-              value: "cluster.local"
+              value: {{ .Values.clusterDomain | quote }}
             - name: REDIS_FULLNAME
               value: {{ include "redis-cluster.fullname" . | quote }}
             {{- if .Values.auth.enabled }}

@@ -12,8 +12,6 @@ data:
     #!/bin/bash
     set -e
 
-    # POD_IP is injected via Kubernetes Downward API (status.podIP)
-    # This is CNI-agnostic: works with Calico, Flannel, AWS VPC CNI, Cilium, etc.
     echo "Starting Redis on ${HOSTNAME} with cluster-announce-ip: ${POD_IP}"
 
     ARGS=(
@@ -52,28 +50,22 @@ data:
 
   ping_liveness_local.sh: |-
     #!/bin/bash
-    set -e
 
     {{- if .Values.auth.enabled }}
     export REDISCLI_AUTH="${REDIS_PASSWORD}"
     {{- end }}
 
-    response=$(
-      timeout -s TERM "$1" \
-      redis-cli \
-        -h localhost \
-        -p {{ .Values.redis.port }} \
-        ping
-    )
+    response=$(timeout -s TERM "$1" redis-cli -h localhost -p {{ .Values.redis.port }} ping 2>/dev/null)
+    exit_code=$?
 
-    if [ "$?" -eq "124" ]; then
+    if [ "${exit_code}" -eq "124" ]; then
       echo "Timed out"
       exit 1
     fi
 
     first_word=$(echo "$response" | awk '{print $1}')
     if [ "$response" != "PONG" ] && [ "$first_word" != "LOADING" ] && [ "$first_word" != "MASTERDOWN" ]; then
-      echo "Unexpected response: $response"
+      echo "Unexpected response: ${response:-empty}"
       exit 1
     fi
 
@@ -93,13 +85,11 @@ data:
     export REDISCLI_AUTH="${REDIS_PASSWORD}"
     {{- end }}
 
-    # FQDN 목록 생성
     FQDNS=()
     for i in $(seq 0 $(( CLUSTER_NODES - 1 ))); do
       FQDNS+=("${FULLNAME}-${i}.${HEADLESS_SVC}.${NAMESPACE}.svc.${DOMAIN}")
     done
 
-    # 1단계: DNS 해결 (CoreDNS 전파 대기)
     echo "=== Step 1: Resolving pod IPs via DNS ==="
     NODE_IPS=()
     for fqdn in "${FQDNS[@]}"; do
@@ -115,26 +105,25 @@ data:
         sleep 2
       done
       if [ -z "${ip}" ]; then
-        echo " ERROR: DNS resolution failed after 120s"
+        echo " ERROR: DNS resolution timed out after 120s"
         exit 1
       fi
       NODE_IPS+=("${ip}:${REDIS_PORT}")
     done
 
-    # 2단계: 각 노드 PING 대기 (IP 직접 사용)
     echo ""
     echo "=== Step 2: Waiting for Redis nodes to accept connections ==="
     for entry in "${NODE_IPS[@]}"; do
       ip="${entry%%:*}"
       echo -n "  Pinging ${ip}:${REDIS_PORT} ..."
       for attempt in $(seq 1 60); do
-        result=$(redis-cli -h "${ip}" -p "${REDIS_PORT}" ping 2>&1)
+        result=$(timeout 5 redis-cli -h "${ip}" -p "${REDIS_PORT}" ping 2>&1)
         if echo "${result}" | grep -q "PONG"; then
           echo " -> OK"
           break
         fi
         if [ "${attempt}" -eq 60 ]; then
-          echo " ERROR: ${result:-no response} (timeout)"
+          echo " ERROR: no PONG after 60 attempts"
           exit 1
         fi
         echo -n "."
@@ -142,23 +131,20 @@ data:
       done
     done
 
-    echo "All nodes are ready."
-    echo "Node IPs: ${NODE_IPS[*]}"
+    echo "All ${CLUSTER_NODES} nodes are ready. IPs: ${NODE_IPS[*]}"
 
-    # 3단계: 클러스터 이미 초기화된 경우 스킵
     echo ""
     echo "=== Step 3: Checking cluster state ==="
     FIRST_IP="${NODE_IPS[0]%%:*}"
     cluster_info=$(redis-cli -h "${FIRST_IP}" -p "${REDIS_PORT}" CLUSTER INFO 2>/dev/null) || true
-    cluster_state=$(echo "$cluster_info" | grep cluster_state | tr -d '[:space:]' | cut -d: -f2)
-    cluster_size=$(echo "$cluster_info"  | grep cluster_size  | tr -d '[:space:]' | cut -d: -f2)
+    cluster_state=$(echo "${cluster_info}" | grep cluster_state | tr -d '[:space:]' | cut -d: -f2)
+    cluster_size=$(echo "${cluster_info}"  | grep cluster_size  | tr -d '[:space:]' | cut -d: -f2)
 
     if [ "${cluster_state}" = "ok" ] && [ "${cluster_size:-0}" -gt "0" ]; then
       echo "Cluster already initialized (state=${cluster_state}, size=${cluster_size}). Skipping."
       exit 0
     fi
 
-    # 4단계: 클러스터 생성
     echo ""
     echo "=== Step 4: Creating Redis cluster ==="
     redis-cli --cluster create \
@@ -170,6 +156,6 @@ data:
 
     echo ""
     echo "=== Step 5: Verifying cluster ==="
-    sleep 3
+    sleep 2
     redis-cli -h "${FIRST_IP}" -p "${REDIS_PORT}" CLUSTER INFO
     redis-cli -h "${FIRST_IP}" -p "${REDIS_PORT}" CLUSTER NODES

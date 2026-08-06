@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:github.com)",
+      "Bash(curl *)",
+      "Bash(gh api *)",
+      "Bash(helm lint *)",
+      "Bash(command -v helm)",
+      "Bash(helm version *)",
+      "WebFetch(domain:hub.docker.com)",
+      "Bash(git init *)",
+      "Bash(git remote *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git push *)",
+      "Bash(git tag *)",
+      "Bash(git config *)",
+      "Bash(security find-internet-password *)",
+      "Bash(brew --prefix helm)",
+      "Read(//opt/homebrew/bin/**)",
+      "Bash(/opt/homebrew/opt/helm/bin/helm lint *)"
+    ]
+  }
+}
