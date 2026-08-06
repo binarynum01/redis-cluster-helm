@@ -2,7 +2,7 @@ apiVersion: v2
 name: redis-cluster
 description: Redis Cluster Helm chart using official Redis image (bitnami/redis-cluster alternative)
 type: application
-version: 0.0.1
+version: 0.0.2
 appVersion: "8.10.0"
 keywords:
   - redis
