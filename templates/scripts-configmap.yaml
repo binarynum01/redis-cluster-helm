@@ -104,16 +104,24 @@ data:
       NODES+=("${FULLNAME}-${i}.${HEADLESS_SVC}.${NAMESPACE}.svc.${DOMAIN}:${REDIS_PORT}")
     done
 
+    echo "Node addresses to connect:"
+    for node in "${NODES[@]}"; do echo "  ${node}"; done
+    echo ""
+
     echo "Waiting for all ${CLUSTER_NODES} Redis nodes to be ready..."
     for node in "${NODES[@]}"; do
       host="${node%%:*}"
       port="${node##*:}"
-      echo -n "  Waiting for ${host}..."
-      until redis-cli -h "${host}" -p "${port}" ping 2>/dev/null | grep -q PONG; do
-        echo -n "."
-        sleep 2
+      echo "  Waiting for ${host}..."
+      until true; do
+        result=$(redis-cli -h "${host}" -p "${port}" ping 2>&1)
+        if echo "${result}" | grep -q "PONG"; then
+          echo "    -> OK (${result})"
+          break
+        fi
+        echo "    -> ${result:-no response} (retrying in 3s)"
+        sleep 3
       done
-      echo " OK"
     done
 
     echo "All nodes are ready."
