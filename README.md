@@ -42,6 +42,11 @@ helm repo update
 # 기본 설치 (비밀번호 자동 생성)
 helm install my-redis redis-cluster/redis-cluster -n redis --create-namespace
 
+# 특정 버전 설치
+helm install my-redis redis-cluster/redis-cluster \
+  --version 1.0.0 \
+  -n redis --create-namespace
+
 # 비밀번호 직접 지정
 helm install my-redis redis-cluster/redis-cluster \
   --set auth.password=mypassword \
