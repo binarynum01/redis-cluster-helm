@@ -1,0 +1,51 @@
+name: Release Chart
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      - name: Package chart
+        run: helm package . --destination /tmp/packages
+
+      - name: Upload tgz to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: /tmp/packages/*.tgz
+
+      - name: Deploy to GitHub Pages
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # gh-pages 브랜치가 있으면 체크아웃, 없으면 orphan으로 생성
+          if git ls-remote --exit-code origin refs/heads/gh-pages > /dev/null 2>&1; then
+            git fetch origin gh-pages
+            git checkout gh-pages
+          else
+            git checkout --orphan gh-pages
+            git rm -rf . --quiet
+          fi
+
+          # 새 패키지 추가 및 index.yaml 재생성
+          cp /tmp/packages/*.tgz .
+          helm repo index . --url https://binarynum01.github.io/redis-cluster-helm
+
+          git add -A
+          git diff --staged --quiet || git commit -m "chore: release ${{ github.ref_name }}"
+          git push origin gh-pages
