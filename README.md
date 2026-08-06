@@ -11,7 +11,7 @@ Bitnami `redis-cluster` 차트가 유료화됨에 따라 공식 Redis 이미지�
 
 ## 특징
 
-- **공식 이미지** — Docker Hub `redis:8.10.0` 사용 (Bitnami 구독 불필요)
+- **공식 이미지** — Docker Hub `redis` 공식 이미지 사용 (Bitnami 구독 불필요)
 - **hostname 기반 클러스터** — Pod 재시작 시 IP 변경에도 클러스터 유지
 - **멱등 초기화** — Helm post-install/post-upgrade Job으로 클러스터 자동 구성, 이미 구성된 경우 스킵
 - **비밀번호 보존** — `helm upgrade` 시 기존 Secret lookup으로 비밀번호 재생성 방지
@@ -33,31 +33,41 @@ Bitnami `redis-cluster` 차트가 유료화됨에 따라 공식 Redis 이미지�
 
 ## 설치
 
+### Helm Repository (권장)
+
 ```bash
-# 레포 클론 후 설치
-git clone https://github.com/<your-org>/redis-cluster-helm.git
+helm repo add redis-cluster https://binarynum01.github.io/redis-cluster-helm
+helm repo update
 
 # 기본 설치 (비밀번호 자동 생성)
-helm install my-redis ./redis-cluster-helm -n redis --create-namespace
+helm install my-redis redis-cluster/redis-cluster -n redis --create-namespace
 
 # 비밀번호 직접 지정
-helm install my-redis ./redis-cluster-helm \
+helm install my-redis redis-cluster/redis-cluster \
   --set auth.password=mypassword \
   -n redis --create-namespace
 
 # values 파일 사용
-helm install my-redis ./redis-cluster-helm \
+helm install my-redis redis-cluster/redis-cluster \
   -f my-values.yaml \
   -n redis --create-namespace
+```
+
+### 소스에서 설치
+
+```bash
+git clone https://github.com/binarynum01/redis-cluster-helm.git
+helm install my-redis ./redis-cluster-helm -n redis --create-namespace
 ```
 
 ## 업그레이드
 
 ```bash
-helm upgrade my-redis ./redis-cluster-helm -n redis
+helm repo update
+helm upgrade my-redis redis-cluster/redis-cluster -n redis
 ```
 
-> 업그레이드 시 기존 클러스터가 이미 구성되어 있으면 init Job이 자동으로 스킵됩니다.
+> 업그레이드 시 클러스터가 이미 구성되어 있으면 init Job이 자동으로 스킵됩니다.
 
 ## 삭제
 
@@ -103,16 +113,6 @@ cluster:
   init: true     # 설치/업그레이드 시 클러스터 자동 초기화
 ```
 
-### 이미지
-
-```yaml
-image:
-  registry: docker.io
-  repository: redis
-  tag: ""          # 기본값은 Chart.yaml appVersion과 동일 (values.yaml 참고)
-  pullPolicy: IfNotPresent
-```
-
 ### 인증
 
 ```yaml
@@ -152,9 +152,6 @@ redis:
 ```yaml
 metrics:
   enabled: true
-  image:
-    repository: oliver006/redis_exporter
-    tag: "v1.62.0"
   serviceMonitor:
     enabled: true   # Prometheus Operator 사용 환경
 ```
@@ -203,7 +200,7 @@ kubectl logs -l job-name=my-redis-redis-cluster-init -n redis
 ```bash
 # Job 삭제 후 helm upgrade로 재실행
 kubectl delete job my-redis-redis-cluster-init -n redis
-helm upgrade my-redis ./redis-cluster-helm -n redis
+helm upgrade my-redis redis-cluster/redis-cluster -n redis
 ```
 
 ### 노드 수 변경 (스케일 아웃)
